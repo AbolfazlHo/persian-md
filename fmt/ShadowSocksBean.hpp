@@ -9,16 +9,16 @@ namespace NekoRay::fmt {
         QString method = "aes-128-gcm";
         QString password = "";
         QString plugin = "";
+        bool uot = false;
 
         QSharedPointer<V2rayStreamSettings> stream = QSharedPointer<V2rayStreamSettings>(new V2rayStreamSettings());
-        QString custom = "";
 
         ShadowSocksBean() : AbstractBean(0) {
             _add(new configItem("method", &method, itemType::string));
             _add(new configItem("pass", &password, itemType::string));
             _add(new configItem("plugin", &plugin, itemType::string));
+            _add(new configItem("uot", &uot, itemType::boolean));
             _add(new configItem("stream", dynamic_cast<JsonStore *>(stream.get()), itemType::jsonStore));
-            _add(new configItem("custom", &custom, itemType::string));
         };
 
         QString DisplayType() override { return "Shadowsocks"; };
@@ -30,7 +30,5 @@ namespace NekoRay::fmt {
         bool TryParseLink(const QString &link);
 
         QString ToShareLink() override;
-
-        QString InsecureHint() override;
     };
 } // namespace NekoRay::fmt

@@ -81,6 +81,7 @@ int main(int argc, char* argv[]) {
     if (NekoRay::dataStore->argv.contains("-appdata")) NekoRay::dataStore->flag_use_appdata = true;
     if (NekoRay::dataStore->argv.contains("-tray")) NekoRay::dataStore->flag_tray = true;
     if (NekoRay::dataStore->argv.contains("-debug")) NekoRay::dataStore->flag_debug = true;
+    if (NekoRay::dataStore->argv.contains("-flag_linux_run_core_as_admin")) NekoRay::dataStore->flag_linux_run_core_as_admin = true;
 #ifdef NKR_CPP_USE_APPDATA
     NekoRay::dataStore->flag_use_appdata = true; // Example: Package & MacOS
 #endif
@@ -243,6 +244,16 @@ int main(int argc, char* argv[]) {
         // raise main window
         MW_dialog_message("", "Raise");
     });
+
+    // Do preset update
+    if (NekoRay::dataStore->user_agent.isEmpty() || NekoRay::dataStore->user_agent.startsWith("Nekoray/1.0") || NekoRay::dataStore->user_agent.startsWith("ClashForAndroid")) {
+        if (IS_NEKO_BOX) {
+            NekoRay::dataStore->user_agent = "NekoBox/PC/2.0 (Prefer ClashMeta Format)";
+        } else {
+            NekoRay::dataStore->user_agent = "NekoRay/PC/2.0 (Prefer ClashMeta Format)";
+        }
+        NekoRay::dataStore->Save();
+    }
 
     UI_InitMainWindow();
     return QApplication::exec();

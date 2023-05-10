@@ -7,6 +7,7 @@
 #include "ui/edit/edit_vmess.h"
 #include "ui/edit/edit_trojan_vless.h"
 #include "ui/edit/edit_naive.h"
+#include "ui/edit/edit_hysteria.h"
 #include "ui/edit/edit_custom.h"
 
 #include "fmt/includes.h"
@@ -74,8 +75,6 @@ DialogEditProfile::DialogEditProfile(const QString &_type, int profileOrGroupId,
         }
         // 传输设置 for NekoBox
         if (IS_NEKO_BOX) {
-            ui->header_type->setVisible(false);
-            ui->header_type_l->setVisible(false);
             if (!ui->utlsFingerprint->count()) ui->utlsFingerprint->addItems(Preset::SingBox::UtlsFingerPrint);
         } else {
             if (!ui->utlsFingerprint->count()) ui->utlsFingerprint->addItems(Preset::V2Ray::UtlsFingerPrint);
@@ -123,7 +122,7 @@ DialogEditProfile::DialogEditProfile(const QString &_type, int profileOrGroupId,
         LOAD_TYPE("vmess");
         LOAD_TYPE("vless");
         LOAD_TYPE("naive");
-        ui->type->addItem("Hysteria", "hysteria");
+        LOAD_TYPE("hysteria");
         ui->type->addItem(tr("Custom (%1 outbound)").arg(software_core_name), "internal");
         ui->type->addItem(tr("Custom (%1 config)").arg(software_core_name), "internal-full");
         ui->type->addItem(tr("Custom (Extra Core)"), "custom");
@@ -177,7 +176,11 @@ void DialogEditProfile::typeSelected(const QString &newType) {
         auto _innerWidget = new EditNaive(this);
         innerWidget = _innerWidget;
         innerEditor = _innerWidget;
-    } else if (type == "custom" || type == "internal" || type == "internal-full" || type == "hysteria") {
+    } else if (type == "hysteria") {
+        auto _innerWidget = new EditHysteria(this);
+        innerWidget = _innerWidget;
+        innerEditor = _innerWidget;
+    } else if (type == "custom" || type == "internal" || type == "internal-full") {
         auto _innerWidget = new EditCustom(this);
         innerWidget = _innerWidget;
         innerEditor = _innerWidget;
@@ -229,13 +232,22 @@ void DialogEditProfile::typeSelected(const QString &newType) {
     }
 
     // left: custom
-    auto custom_item = ent->bean->_get("custom");
-    if (custom_item != nullptr) {
-        ui->custom_box->setVisible(true);
-        CACHE.custom = *((QString *) custom_item->ptr);
-    } else {
-        ui->custom_box->setVisible(false);
+    CACHE.custom_config = ent->bean->custom_config;
+    CACHE.custom_outbound = ent->bean->custom_outbound;
+    bool show_custom_config = true;
+    bool show_custom_outbound = true;
+    if (type == "chain") {
+        show_custom_outbound = false;
+    } else if (type == "custom") {
+        if (customType == "internal") {
+            show_custom_outbound = false;
+        } else if (customType == "internal-full") {
+            show_custom_outbound = false;
+            show_custom_config = false;
+        }
     }
+    ui->custom_box->setVisible(show_custom_outbound);
+    ui->custom_global_box->setVisible(show_custom_config);
 
     // 左边 bean
     auto old = ui->bean->layout()->itemAt(0)->widget();
@@ -342,10 +354,8 @@ void DialogEditProfile::accept() {
     }
 
     // cached custom
-    auto custom_item = ent->bean->_get("custom");
-    if (custom_item != nullptr) {
-        *((QString *) custom_item->ptr) = CACHE.custom;
-    }
+    ent->bean->custom_outbound = CACHE.custom_outbound;
+    ent->bean->custom_config = CACHE.custom_config;
 
     // finish
     QStringList msg = {"accept"};
@@ -372,10 +382,15 @@ void DialogEditProfile::editor_cache_updated_impl() {
     } else {
         ui->certificate_edit->setText(tr("Already set"));
     }
-    if (CACHE.custom.isEmpty()) {
-        ui->custom_edit->setText(tr("Not set"));
+    if (CACHE.custom_outbound.isEmpty()) {
+        ui->custom_outbound_edit->setText(tr("Not set"));
     } else {
-        ui->custom_edit->setText(tr("Already set"));
+        ui->custom_outbound_edit->setText(tr("Already set"));
+    }
+    if (CACHE.custom_config.isEmpty()) {
+        ui->custom_config_edit->setText(tr("Not set"));
+    } else {
+        ui->custom_config_edit->setText(tr("Already set"));
     }
 
     // CACHE macro
@@ -388,8 +403,13 @@ void DialogEditProfile::editor_cache_updated_impl() {
     }
 }
 
-void DialogEditProfile::on_custom_edit_clicked() {
-    C_EDIT_JSON_ALLOW_EMPTY(custom)
+void DialogEditProfile::on_custom_outbound_edit_clicked() {
+    C_EDIT_JSON_ALLOW_EMPTY(custom_outbound)
+    editor_cache_updated_impl();
+}
+
+void DialogEditProfile::on_custom_config_edit_clicked() {
+    C_EDIT_JSON_ALLOW_EMPTY(custom_config)
     editor_cache_updated_impl();
 }
 

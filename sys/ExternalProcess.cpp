@@ -19,7 +19,7 @@ namespace NekoRay::sys {
         if (started) return;
         started = true;
 
-        if (show_log) {
+        if (managed) {
             connect(this, &QProcess::readyReadStandardOutput, this, [&]() {
                 MW_show_log_ext_vt100(readAllStandardOutput().trimmed());
             });
@@ -30,7 +30,7 @@ namespace NekoRay::sys {
                 if (!killed) {
                     crashed = true;
                     MW_show_log_ext(tag, "errorOccurred:" + errorString());
-                    if (managed) MW_dialog_message("ExternalProcess", "Crashed");
+                    MW_dialog_message("ExternalProcess", "Crashed");
                 }
             });
             connect(this, &QProcess::stateChanged, this, [&](QProcess::ProcessState state) {
@@ -41,11 +41,19 @@ namespace NekoRay::sys {
                         crashed = true;
                         MW_show_log_ext(tag, "[Error] Program exited accidentally: " + errorString());
                         Kill();
-                        if (managed) MW_dialog_message("ExternalProcess", "Crashed");
+                        MW_dialog_message("ExternalProcess", "Crashed");
                     }
                 }
             });
             MW_show_log_ext(tag, "[Starting] " + env.join(" ") + " " + program + " " + arguments.join(" "));
+        }
+
+        QProcess::setEnvironment(env);
+
+        if (NekoRay::dataStore->flag_linux_run_core_as_admin && dynamic_cast<CoreProcess *>(this) && program != "pkexec") {
+            arguments.prepend(program);
+            arguments.prepend("--keep-cwd");
+            program = "pkexec";
         }
 
         QProcess::setEnvironment(env);
@@ -64,7 +72,6 @@ namespace NekoRay::sys {
 
     CoreProcess::CoreProcess(const QString &core_path, const QStringList &args) : ExternalProcess() {
         ExternalProcess::managed = false;
-        ExternalProcess::show_log = false;
         ExternalProcess::program = core_path;
         ExternalProcess::arguments = args;
 
@@ -119,11 +126,15 @@ namespace NekoRay::sys {
 
     void CoreProcess::Start() {
         show_stderr = false;
+        // set extra env
         auto v2ray_asset_dir = FindCoreAsset("geoip.dat");
         if (!v2ray_asset_dir.isEmpty()) {
             v2ray_asset_dir = QFileInfo(v2ray_asset_dir).absolutePath();
             env << "V2RAY_LOCATION_ASSET=" + v2ray_asset_dir;
         }
+        if (NekoRay::dataStore->core_ray_direct_dns) env << "NKR_CORE_RAY_DIRECT_DNS=1";
+        if (NekoRay::dataStore->core_ray_windows_disable_auto_interface) env << "NKR_CORE_RAY_WINDOWS_DISABLE_AUTO_INTERFACE=1";
+        //
         ExternalProcess::Start();
         write((dataStore->core_token + "\n").toUtf8());
     }

@@ -16,8 +16,6 @@
 
 #endif
 
-#define FIRST_OR_SECOND(a, b) a.isEmpty() ? b : a
-
 namespace NekoRay::sub {
 
     GroupUpdater *groupUpdater = new GroupUpdater;
@@ -130,28 +128,9 @@ namespace NekoRay::sub {
         // Hysteria
         if (str.startsWith("hysteria://")) {
             needFix = false;
-            // https://github.com/HyNetwork/hysteria/wiki/URI-Scheme
-            ent = ProfileManager::NewProxyEntity("custom");
-            auto bean = ent->CustomBean();
-            auto url = QUrl(str);
-            auto query = QUrlQuery(url.query());
-            if (url.host().isEmpty() || url.port() == -1 || !query.hasQueryItem("upmbps")) return;
-            bean->name = url.fragment();
-            bean->serverAddress = url.host();
-            bean->serverPort = url.port();
-            bean->core = "hysteria";
-            bean->command = QString(Preset::Hysteria::command).split(" ");
-            auto result = QString2QJsonObject(Preset::Hysteria::config);
-            result["server_name"] = url.host(); // default sni
-            result["obfs"] = query.queryItemValue("obfsParam");
-            result["insecure"] = query.queryItemValue("insecure") == "1";
-            result["up_mbps"] = query.queryItemValue("upmbps").toInt();
-            result["down_mbps"] = query.queryItemValue("downmbps").toInt();
-            result["protocol"] = query.hasQueryItem("protocol") ? query.queryItemValue("protocol") : "udp";
-            if (query.hasQueryItem("auth")) result["auth_str"] = query.queryItemValue("auth");
-            if (query.hasQueryItem("alpn")) result["alpn"] = query.queryItemValue("alpn");
-            if (query.hasQueryItem("peer")) result["server_name"] = query.queryItemValue("peer");
-            bean->config_simple = QJsonObject2QString(result, false);
+            ent = ProfileManager::NewProxyEntity("hysteria");
+            auto ok = ent->HysteriaBean()->TryParseLink(str);
+            if (!ok) return;
         }
 
         if (ent == nullptr) return;
@@ -175,6 +154,23 @@ namespace NekoRay::sub {
         }
     }
 
+    QStringList Node2QStringList(const YAML::Node &n) {
+        try {
+            if (n.IsSequence()) {
+                QStringList list;
+                for (auto item: n) {
+                    list << item.as<std::string>().c_str();
+                }
+                return list;
+            } else {
+                return {};
+            }
+        } catch (const YAML::Exception &ex) {
+            qDebug() << ex.what();
+            return {};
+        }
+    }
+
     int Node2Int(const YAML::Node &n, const int &def = 0) {
         try {
             return n.as<int>();
@@ -188,6 +184,11 @@ namespace NekoRay::sub {
         try {
             return n.as<bool>();
         } catch (const YAML::Exception &ex) {
+            try {
+                return n.as<int>();
+            } catch (const YAML::Exception &ex2) {
+                ex2.what();
+            }
             qDebug() << ex.what();
             return def;
         }
@@ -211,6 +212,8 @@ namespace NekoRay::sub {
             auto proxies = YAML::Load(str.toStdString())["proxies"];
             for (auto proxy: proxies) {
                 auto type = Node2QString(proxy["type"]);
+                auto type_clash = type;
+
                 if (type == "ss" || type == "ssr") type = "shadowsocks";
                 if (type == "socks5") type = "socks";
 
@@ -261,14 +264,20 @@ namespace NekoRay::sub {
                     bean->password = Node2QString(proxy["password"]);
                     if (Node2Bool(proxy["tls"])) bean->stream->security = "tls";
                     if (Node2Bool(proxy["skip-cert-verify"])) bean->stream->allow_insecure = true;
-                } else if (type == "trojan") {
+                } else if (type == "trojan" || type == "vless") {
                     needFix = true;
                     auto bean = ent->TrojanVLESSBean();
-                    bean->password = Node2QString(proxy["password"]);
+                    if (type == "vless") {
+                        bean->flow = Node2QString(proxy["flow"]);
+                        bean->password = Node2QString(proxy["uuid"]);
+                    } else {
+                        bean->password = Node2QString(proxy["password"]);
+                    }
                     bean->stream->security = "tls";
                     bean->stream->network = Node2QString(proxy["network"], "tcp");
                     bean->stream->sni = FIRST_OR_SECOND(Node2QString(proxy["sni"]), Node2QString(proxy["servername"]));
                     if (Node2Bool(proxy["skip-cert-verify"])) bean->stream->allow_insecure = true;
+                    if (IS_NEKO_BOX) bean->stream->utlsFingerprint = Node2QString(proxy["client-fingerprint"]);
 
                     // opts
                     auto ws = NodeChild(proxy, {"ws-opts", "ws-opt"});
@@ -285,6 +294,12 @@ namespace NekoRay::sub {
                     auto grpc = NodeChild(proxy, {"grpc-opts", "grpc-opt"});
                     if (grpc.IsMap()) {
                         bean->stream->path = Node2QString(grpc["grpc-service-name"]);
+                    }
+
+                    auto reality = NodeChild(proxy, {"reality-opts"});
+                    if (reality.IsMap()) {
+                        bean->stream->reality_pbk = Node2QString(reality["public-key"]);
+                        bean->stream->reality_sid = Node2QString(reality["short-id"]);
                     }
                 } else if (type == "vmess") {
                     needFix = true;
@@ -341,6 +356,38 @@ namespace NekoRay::sub {
                             break;
                         }
                     }
+                } else if (type_clash == "hysteria") {
+                    auto bean = ent->HysteriaBean();
+
+                    bean->allowInsecure = Node2Bool(proxy["skip-cert-verify"]);
+                    auto alpn = Node2QStringList(proxy["alpn"]);
+                    if (!alpn.isEmpty()) bean->alpn = alpn[0];
+                    bean->sni = Node2QString(proxy["sni"]);
+
+                    bean->name = Node2QString(proxy["name"]);
+                    bean->serverAddress = Node2QString(proxy["server"]);
+                    bean->serverPort = Node2Int(proxy["port"]);
+                    if (bean->serverPort == 0) bean->hopPort = Node2QString(proxy["port"]);
+
+                    auto auth_str = FIRST_OR_SECOND(Node2QString(proxy["auth_str"]), Node2QString(proxy["auth-str"]));
+                    auto auth = Node2QString(proxy["auth"]);
+                    if (!auth_str.isEmpty()) {
+                        bean->authPayloadType = fmt::HysteriaBean::hysteria_auth_string;
+                        bean->authPayload = auth_str;
+                    }
+                    if (!auth.isEmpty()) {
+                        bean->authPayloadType = fmt::HysteriaBean::hysteria_auth_base64;
+                        bean->authPayload = auth;
+                    }
+
+                    if (Node2Bool(proxy["disable_mtu_discovery"]) || Node2Bool(proxy["disable-mtu-discovery"])) bean->disableMtuDiscovery = true;
+                    bean->streamReceiveWindow = Node2Int(proxy["recv-window"]);
+                    bean->connectionReceiveWindow = Node2Int(proxy["recv-window-conn"]);
+
+                    auto upMbps = Node2QString(proxy["up"]).split(" ")[0].toInt();
+                    auto downMbps = Node2QString(proxy["down"]).split(" ")[0].toInt();
+                    if (upMbps > 0) bean->uploadMbps = upMbps;
+                    if (downMbps > 0) bean->downloadMbps = downMbps;
                 } else {
                     continue;
                 }

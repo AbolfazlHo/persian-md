@@ -59,23 +59,25 @@ DialogBasicSettings::DialogBasicSettings(QWidget *parent)
     // Common
 
     if (IS_NEKO_BOX) {
-        ui->groupBox_mux->hide();
         ui->groupBox_http->hide();
         ui->inbound_socks_port_l->setText(ui->inbound_socks_port_l->text().replace("Socks", "Mixed"));
-        ui->hlayout_l2->addWidget(ui->groupBox_log);
+        ui->hlayout_l2->addWidget(ui->groupbox_custom_inbound);
         ui->log_level->addItems(QString("trace debug info warn error fatal panic").split(" "));
+        ui->mux_protocol->addItems({"", "smux", "yamux"});
     } else {
         ui->log_level->addItems({"debug", "info", "warning", "none"});
+        ui->mux_protocol->addItems({"", "mux.cool"});
     }
 
     refresh_auth();
 
-    ui->socks_ip->setText(NekoRay::dataStore->inbound_address);
-    ui->log_level->setCurrentText(NekoRay::dataStore->log_level);
+    D_LOAD_STRING(inbound_address)
+    D_LOAD_COMBO_STRING(log_level)
     CACHE.custom_inbound = NekoRay::dataStore->custom_inbound;
     D_LOAD_INT(inbound_socks_port)
     D_LOAD_INT_ENABLE(inbound_http_port, http_enable)
-    D_LOAD_INT_ENABLE(mux_cool, mux_cool_enable)
+    D_LOAD_INT(mux_concurrency)
+    D_LOAD_COMBO_STRING(mux_protocol)
     D_LOAD_INT(test_concurrent)
     D_LOAD_STRING(test_url)
 
@@ -155,7 +157,7 @@ DialogBasicSettings::DialogBasicSettings(QWidget *parent)
             file.write("0");
         }
         file.close();
-        MessageBoxWarning(tr("Settings changed"), tr("Restart nekoray to take effect."));
+        CACHE.needRestart = true;
     });
 
     // Subscription
@@ -166,8 +168,6 @@ DialogBasicSettings::DialogBasicSettings(QWidget *parent)
     D_LOAD_BOOL(sub_insecure)
 
     // Core
-
-    if (!IS_NEKO_BOX) ui->core_settings->hide();
 
     ui->groupBox_core->setTitle(software_core_name);
     ui->core_v2ray_asset->setText(NekoRay::dataStore->v2ray_asset_dir);
@@ -250,7 +250,6 @@ DialogBasicSettings::DialogBasicSettings(QWidget *parent)
 
     ui->utlsFingerprint->addItems(IS_NEKO_BOX ? Preset::SingBox::UtlsFingerPrint : Preset::V2Ray::UtlsFingerPrint);
 
-    D_LOAD_BOOL(insecure_hint)
     D_LOAD_BOOL(skip_cert)
     ui->enable_js_hook->setCurrentIndex(NekoRay::dataStore->enable_js_hook);
     ui->utlsFingerprint->setCurrentText(NekoRay::dataStore->utlsFingerprint);
@@ -261,16 +260,15 @@ DialogBasicSettings::~DialogBasicSettings() {
 }
 
 void DialogBasicSettings::accept() {
-    if (CACHE.needRestart) MessageBoxWarning(tr("Settings changed"), tr("Restart nekoray to take effect."));
-
     // Common
 
-    NekoRay::dataStore->inbound_address = ui->socks_ip->text();
-    NekoRay::dataStore->log_level = ui->log_level->currentText();
+    D_SAVE_STRING(inbound_address)
+    D_SAVE_COMBO_STRING(log_level)
     NekoRay::dataStore->custom_inbound = CACHE.custom_inbound;
     D_SAVE_INT(inbound_socks_port)
     D_SAVE_INT_ENABLE(inbound_http_port, http_enable)
-    D_SAVE_INT_ENABLE(mux_cool, mux_cool_enable)
+    D_SAVE_INT(mux_concurrency)
+    D_SAVE_COMBO_STRING(mux_protocol)
     D_SAVE_INT(test_concurrent)
     D_SAVE_STRING(test_url)
 
@@ -308,7 +306,6 @@ void DialogBasicSettings::accept() {
 
     // Security
 
-    D_SAVE_BOOL(insecure_hint)
     D_SAVE_BOOL(skip_cert)
     NekoRay::dataStore->enable_js_hook = ui->enable_js_hook->currentIndex();
     NekoRay::dataStore->utlsFingerprint = ui->utlsFingerprint->currentText();
@@ -318,7 +315,9 @@ void DialogBasicSettings::accept() {
         MW_dialog_message("", "ClearConnectionList");
     }
 
-    MW_dialog_message(Dialog_DialogBasicSettings, "UpdateDataStore");
+    QStringList str{"UpdateDataStore"};
+    if (CACHE.needRestart) str << "NeedRestart";
+    MW_dialog_message(Dialog_DialogBasicSettings, str.join(","));
     QDialog::accept();
 }
 
@@ -396,17 +395,25 @@ void DialogBasicSettings::on_core_settings_clicked() {
     w->setLayout(layout);
     //
     auto line = -1;
-    QCheckBox *core_box_auto_detect_interface;
     QCheckBox *core_box_enable_clash_api;
-    QLineEdit *core_box_clash_api;
-    QLineEdit *core_box_clash_api_secret;
+    MyLineEdit *core_box_clash_api;
+    MyLineEdit *core_box_clash_api_secret;
+    MyLineEdit *core_box_underlying_dns;
+    QCheckBox *core_ray_direct_dns;
+    QCheckBox *core_ray_windows_disable_auto_interface;
+    //
+    auto core_box_underlying_dns_l = new QLabel(tr("Override underlying DNS"));
+    core_box_underlying_dns_l->setToolTip(tr(
+        "It is recommended to leave it blank, but it sometimes does not work, at this time you can set this option.\n"
+        "For NekoRay, this rewrites the underlying(localhost) DNS in VPN mode.\n"
+        "For NekoBox, this rewrites the underlying(localhost) DNS in VPN mode, normal mode, and also URL Test."));
+    core_box_underlying_dns = new MyLineEdit;
+    core_box_underlying_dns->setText(NekoRay::dataStore->core_box_underlying_dns);
+    core_box_underlying_dns->setMinimumWidth(300);
+    layout->addWidget(core_box_underlying_dns_l, ++line, 0);
+    layout->addWidget(core_box_underlying_dns, line, 1);
+    //
     if (IS_NEKO_BOX) {
-        auto core_box_auto_detect_interface_l = new QLabel("auto_detect_interface");
-        core_box_auto_detect_interface = new QCheckBox;
-        core_box_auto_detect_interface->setChecked(NekoRay::dataStore->core_box_auto_detect_interface);
-        layout->addWidget(core_box_auto_detect_interface_l, ++line, 0);
-        layout->addWidget(core_box_auto_detect_interface, line, 1);
-        //
         auto core_box_enable_clash_api_l = new QLabel("Enable Clash API");
         core_box_enable_clash_api = new QCheckBox;
         core_box_enable_clash_api->setChecked(NekoRay::dataStore->core_box_clash_api > 0);
@@ -424,16 +431,38 @@ void DialogBasicSettings::on_core_settings_clicked() {
         core_box_clash_api_secret->setText(NekoRay::dataStore->core_box_clash_api_secret);
         layout->addWidget(core_box_clash_api_secret_l, ++line, 0);
         layout->addWidget(core_box_clash_api_secret, line, 1);
+    } else {
+        auto core_ray_direct_dns_l = new QLabel("NKR_CORE_RAY_DIRECT_DNS");
+        core_ray_direct_dns_l->setToolTip(tr("If you VPN mode is not working, try to change this option."));
+        core_ray_direct_dns = new QCheckBox;
+        core_ray_direct_dns->setChecked(NekoRay::dataStore->core_ray_direct_dns);
+        connect(core_ray_direct_dns, &QCheckBox::clicked, this, [&] { CACHE.needRestart = true; });
+        layout->addWidget(core_ray_direct_dns_l, ++line, 0);
+        layout->addWidget(core_ray_direct_dns, line, 1);
+#ifdef Q_OS_WIN
+        auto core_ray_windows_disable_auto_interface_l = new QLabel("NKR_CORE_RAY_WINDOWS_DISABLE_AUTO_INTERFACE");
+        core_ray_windows_disable_auto_interface_l->setToolTip(tr("If you VPN mode is not working, try to change this option."));
+        core_ray_windows_disable_auto_interface = new QCheckBox;
+        core_ray_windows_disable_auto_interface->setChecked(NekoRay::dataStore->core_ray_windows_disable_auto_interface);
+        connect(core_ray_windows_disable_auto_interface, &QCheckBox::clicked, this, [&] { CACHE.needRestart = true; });
+        layout->addWidget(core_ray_windows_disable_auto_interface_l, ++line, 0);
+        layout->addWidget(core_ray_windows_disable_auto_interface, line, 1);
+#endif
     }
     //
     auto box = new QDialogButtonBox;
     box->setOrientation(Qt::Horizontal);
     box->setStandardButtons(QDialogButtonBox::Cancel | QDialogButtonBox::Ok);
     connect(box, &QDialogButtonBox::accepted, w, [=] {
+        NekoRay::dataStore->core_box_underlying_dns = core_box_underlying_dns->text();
         if (IS_NEKO_BOX) {
-            NekoRay::dataStore->core_box_auto_detect_interface = core_box_auto_detect_interface->isChecked();
             NekoRay::dataStore->core_box_clash_api = core_box_clash_api->text().toInt() * (core_box_enable_clash_api->isChecked() ? 1 : -1);
             NekoRay::dataStore->core_box_clash_api_secret = core_box_clash_api_secret->text();
+        } else {
+            NekoRay::dataStore->core_ray_direct_dns = core_ray_direct_dns->isChecked();
+#ifdef Q_OS_WIN
+            NekoRay::dataStore->core_ray_windows_disable_auto_interface = core_ray_windows_disable_auto_interface->isChecked();
+#endif
         }
         MW_dialog_message(Dialog_DialogBasicSettings, "UpdateDataStore");
         w->accept();
@@ -441,6 +470,7 @@ void DialogBasicSettings::on_core_settings_clicked() {
     connect(box, &QDialogButtonBox::rejected, w, &QDialog::reject);
     layout->addWidget(box, ++line, 1);
     //
+    ADD_ASTERISK(w)
     w->exec();
     w->deleteLater();
     refresh_auth();
